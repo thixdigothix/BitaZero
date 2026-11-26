@@ -1671,8 +1671,30 @@ app.put('/api/admin/users/:id/role', requireAdmin, async (req: AuthRequest, res)
   }
 });
 
+function resolveServerPort(): number {
+  const portFlagIdx = process.argv.indexOf('--port');
+  if (portFlagIdx !== -1 && process.argv[portFlagIdx + 1]) {
+    const parsed = Number(process.argv[portFlagIdx + 1]);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  const portEqArg = process.argv.find((arg) => arg.startsWith('--port='));
+  if (portEqArg) {
+    const parsed = Number(portEqArg.split('=')[1]);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return Number(process.env.PORT) || 3000;
+}
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'Endpoint da API não encontrado.' });
+});
+
 async function startServer() {
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = resolveServerPort();
 
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');

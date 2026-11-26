@@ -1,26 +1,60 @@
+const RETRYABLE_METHODS = new Set(['GET', 'HEAD']);
+const TRANSIENT_STATUSES = new Set([502, 503, 504]);
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function apiFetch<T>(
   url: string,
   options: RequestInit = {},
   idToken?: string | null
 ): Promise<T> {
-  const headers = new Headers(options.headers || {});
-  if (!headers.has('Content-Type') && options.body) {
-    headers.set('Content-Type', 'application/json');
-  }
-  if (idToken) {
-    headers.set('Authorization', `Bearer ${idToken}`);
+  const method = (options.method || 'GET').toUpperCase();
+  const canRetry = RETRYABLE_METHODS.has(method);
+  const maxAttempts = canRetry ? 4 : 1;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('Content-Type') && options.body) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (idToken) {
+      headers.set('Authorization', `Bearer ${idToken}`);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+    } catch (networkErr) {
+      if (canRetry && attempt < maxAttempts - 1) {
+        await delay(500 * (attempt + 1));
+        continue;
+      }
+      throw networkErr;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+    const data = isJson ? await response.json().catch(() => ({})) : {};
+
+    if (!response.ok) {
+      const isTransient404 = response.status === 404 && (!isJson || !data.error);
+      const isTransientStatus = TRANSIENT_STATUSES.has(response.status) || isTransient404;
+      if (canRetry && isTransientStatus && attempt < maxAttempts - 1) {
+        await delay(500 * (attempt + 1));
+        continue;
+      }
+      throw new Error(data.error || `Erro na requisição (${response.status})`);
+    }
+
+    return data as T;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error || `Erro na requisição (${response.status})`);
-  }
-  return data as T;
+  throw new Error('Falha ao conectar com o servidor.');
 }
 
 export function compressImageFileToDataUri(
