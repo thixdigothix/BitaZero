@@ -1,0 +1,6 @@
+{
+  "name": "SETE A ZERO",
+  "description": "Jogo tático de draft de futebol e desafio das sete vitórias sem sofrer gols, com painel administrativo completo de elencos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
