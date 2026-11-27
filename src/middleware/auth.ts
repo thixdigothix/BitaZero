@@ -1,7 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { adminAuth } from '../lib/firebase-admin.ts';
+import { hasDatabaseConfig } from '../db/index.ts';
 import { getOrCreateUser } from '../db/users.ts';
+import { getOrCreateMemoryUser } from '../server/memoryStore.ts';
 
 export interface DbUser {
   id: number;
@@ -14,6 +16,17 @@ export interface DbUser {
 export interface AuthRequest extends Request {
   user?: DecodedIdToken;
   dbUser?: DbUser;
+}
+
+async function resolveDbUser(
+  uid: string,
+  email: string,
+  displayName?: string
+): Promise<DbUser> {
+  if (!hasDatabaseConfig) {
+    return getOrCreateMemoryUser(uid, email, displayName);
+  }
+  return getOrCreateUser(uid, email, displayName);
 }
 
 export const optionalAuth = async (
@@ -30,7 +43,7 @@ export const optionalAuth = async (
   try {
     const decoded = await adminAuth.verifyIdToken(token);
     req.user = decoded;
-    req.dbUser = await getOrCreateUser(
+    req.dbUser = await resolveDbUser(
       decoded.uid,
       decoded.email || `${decoded.uid}@user.local`,
       decoded.name
@@ -55,7 +68,7 @@ export const requireAuth = async (
   try {
     const decoded = await adminAuth.verifyIdToken(token);
     req.user = decoded;
-    req.dbUser = await getOrCreateUser(
+    req.dbUser = await resolveDbUser(
       decoded.uid,
       decoded.email || `${decoded.uid}@user.local`,
       decoded.name

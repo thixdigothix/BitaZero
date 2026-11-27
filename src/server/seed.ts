@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { db } from '../db/index.ts';
+import { db, ensureDatabaseSchema, hasDatabaseConfig } from '../db/index.ts';
 import { squads, players } from '../db/schema.ts';
 import { OFFICIAL_SQUADS, type SeedSquad } from './officialSquads.ts';
 
@@ -41,9 +41,11 @@ function getOfficialSquadKey(name: string, competition: string | null | undefine
 }
 
 export async function ensureInitialExampleData(): Promise<void> {
+  if (!hasDatabaseConfig) return;
   if (!seedPromise) {
     seedPromise = (async () => {
       try {
+        await ensureDatabaseSchema();
         const existingSquads = await db.select().from(squads);
         if (existingSquads.length === 0) {
           for (const squadData of OFFICIAL_SQUADS) {
