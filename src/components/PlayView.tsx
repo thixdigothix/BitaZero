@@ -49,12 +49,15 @@ export function PlayView({
         );
         setPayload(res);
       } catch (err: any) {
+        if (err?.message === 'Campanha não encontrada.') {
+          onClearInitialCampaign();
+        }
         setError(err.message || 'Erro ao carregar campanha.');
       } finally {
         setLoading(false);
       }
     },
-    [idToken]
+    [idToken, onClearInitialCampaign]
   );
 
   useEffect(() => {

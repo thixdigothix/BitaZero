@@ -1,5 +1,4 @@
-import { Trophy, Play, Home, Users, LogIn, LogOut, Volume2, VolumeX, HelpCircle, Award } from 'lucide-react';
-import { useAuth } from '../context/AuthContext.tsx';
+import { Trophy, Play, Home, Users, Volume2, VolumeX, HelpCircle, Award } from 'lucide-react';
 
 export type AppTab = 'home' | 'play' | 'how-it-works' | 'achievements' | 'squads' | 'credits';
 
@@ -16,7 +15,6 @@ export function Navbar({
   soundEnabled,
   onToggleSound,
 }: NavbarProps) {
-  const { dbUser, firebaseUser, loading, loginWithGoogle, logout } = useAuth();
 
   const navItems: Array<{ id: AppTab; label: string; icon: typeof Home }> = [
     { id: 'home', label: 'Início', icon: Home },
@@ -75,7 +73,7 @@ export function Navbar({
           })}
         </nav>
 
-        {/* Right: Sound & Auth */}
+        {/* Right: Sound */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
@@ -89,39 +87,6 @@ export function Navbar({
               <VolumeX className="h-4 w-4 text-slate-500" />
             )}
           </button>
-
-          {loading ? (
-            <div className="h-9 w-24 rounded-lg bg-slate-800/70 animate-pulse" />
-          ) : firebaseUser ? (
-            <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-[#0E1626] px-2.5 py-1.5">
-              <div className="hidden md:block text-right leading-tight">
-                <p className="text-xs font-semibold text-slate-100 max-w-[120px] truncate">
-                  {dbUser?.displayName || firebaseUser.displayName || 'Treinador'}
-                </p>
-                <p className="text-[11px] text-slate-400">
-                  {dbUser?.role === 'admin' ? 'Administrador' : 'Treinador'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={logout}
-                title="Sair da conta"
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white whitespace-nowrap shrink-0"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Sair</span>
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={loginWithGoogle}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-[#0E1626] px-3 py-1.5 text-xs sm:text-sm font-semibold text-slate-100 transition hover:border-emerald-500/60 hover:bg-slate-800 whitespace-nowrap shrink-0"
-            >
-              <LogIn className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Entrar</span>
-            </button>
-          )}
         </div>
       </div>
     </header>

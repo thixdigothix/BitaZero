@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import zlib from 'zlib';
 import type { CreditEntry, MatchEvent, PlayerSnapshot } from '../db/schema.ts';
 import type { DbUser } from '../middleware/auth.ts';
 import {
@@ -613,6 +614,7 @@ export function memBuildCampaignPayload(campaignId: number) {
     currentSquad,
     finalBoss,
     userBreakdown,
+    _stateToken: memSerializeCampaignToken(campaign.id),
   };
 }
 
@@ -634,8 +636,13 @@ export function memCreateCampaign(input: {
   const validDifficulty =
     input.difficulty === 'almanaque' ? 'almanaque' : 'classico';
 
+  let uniqueId = Math.floor(100000 + Math.random() * 899999999);
+  while (store.campaigns.some((c) => c.id === uniqueId)) {
+    uniqueId = Math.floor(100000 + Math.random() * 899999999);
+  }
+
   const campaign: MemCampaign = {
-    id: store.nextCampaignId++,
+    id: uniqueId,
     userId: input.userId ?? null,
     guestToken: input.guestToken ?? null,
     coachName: input.coachName,
@@ -1046,4 +1053,314 @@ export function memListAchievements(
   }));
 
   return { unlocked: userRows, globalCounts };
+}
+
+const STATE_SIGNING_KEY = crypto
+  .createHash('sha256')
+  .update(
+    `bitazero-stateless-v1:${
+      process.env.SESSION_SECRET ||
+      process.env.VERCEL_PROJECT_ID ||
+      'canvas-loader-pv8b6'
+    }`
+  )
+  .digest();
+
+interface CompactMatch {
+  o: number;
+  st: string;
+  on: string;
+  os: number;
+  hs: number;
+  as: number;
+  pn: string | null;
+  ev: MatchEvent[];
+  pa: number;
+}
+
+interface CompactAchievement {
+  cd: string;
+  t: string;
+  d: string;
+  ua: number;
+}
+
+interface CompactStatePayload {
+  v: 1;
+  c: {
+    id: number;
+    u: number | null;
+    g: string | null;
+    cn: string;
+    f: string;
+    sy: string;
+    df: string;
+    st: string;
+    sk: number;
+    cs: number | null;
+    ds: number[];
+    ar: number;
+    w: number;
+    dr: number;
+    lo: number;
+    gf: number;
+    ga: number;
+    ic: boolean;
+    ip: boolean;
+    sc: string;
+    ca: number;
+    cpa: number | null;
+  };
+  l: Array<[number, number | null, number | null]>;
+  m: CompactMatch[];
+  a: CompactAchievement[];
+}
+
+export function memSerializeCampaignToken(campaignId: number): string | undefined {
+  const store = getStore();
+  const c = store.campaigns.find((item) => item.id === campaignId);
+  if (!c) return undefined;
+
+  const slots = store.lineups
+    .filter((s) => s.campaignId === campaignId)
+    .sort((a, b) => a.slotIndex - b.slotIndex)
+    .map<[number, number | null, number | null]>((s) => [
+      s.slotIndex,
+      s.playerId,
+      s.pickedAt ? s.pickedAt.getTime() : null,
+    ]);
+
+  const matchList = store.matches
+    .filter((m) => m.campaignId === campaignId)
+    .sort((a, b) => a.matchOrder - b.matchOrder)
+    .map<CompactMatch>((m) => ({
+      o: m.matchOrder,
+      st: m.stage,
+      on: m.opponentName,
+      os: m.opponentStrength,
+      hs: m.homeScore,
+      as: m.awayScore,
+      pn: m.penaltyNote,
+      ev: m.events,
+      pa: m.playedAt.getTime(),
+    }));
+
+  const achList = store.achievements
+    .filter((a) => a.campaignId === campaignId)
+    .map<CompactAchievement>((a) => ({
+      cd: a.code,
+      t: a.title,
+      d: a.description,
+      ua: a.unlockedAt.getTime(),
+    }));
+
+  const compact: CompactStatePayload = {
+    v: 1,
+    c: {
+      id: c.id,
+      u: c.userId,
+      g: c.guestToken,
+      cn: c.coachName,
+      f: c.formation,
+      sy: c.style,
+      df: c.difficulty,
+      st: c.status,
+      sk: c.skipsRemaining,
+      cs: c.currentSquadId,
+      ds: c.drawnSquadIds,
+      ar: c.avgRating,
+      w: c.wins,
+      dr: c.draws,
+      lo: c.losses,
+      gf: c.goalsFor,
+      ga: c.goalsAgainst,
+      ic: c.isChampion,
+      ip: c.isPerfectSevenZero,
+      sc: c.shareCode,
+      ca: c.createdAt.getTime(),
+      cpa: c.completedAt ? c.completedAt.getTime() : null,
+    },
+    l: slots,
+    m: matchList,
+    a: achList,
+  };
+
+  const compressed = zlib
+    .deflateRawSync(Buffer.from(JSON.stringify(compact), 'utf8'))
+    .toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', STATE_SIGNING_KEY)
+    .update(compressed)
+    .digest('base64url');
+  return `${compressed}.${sig}`;
+}
+
+export function memHydrateFromToken(token?: string | null): number | null {
+  if (!token || typeof token !== 'string') return null;
+  const dotIdx = token.indexOf('.');
+  if (dotIdx <= 0) return null;
+
+  const compressed = token.slice(0, dotIdx);
+  const sig = token.slice(dotIdx + 1);
+  if (!compressed || !sig) return null;
+
+  try {
+    const expectedSig = crypto
+      .createHmac('sha256', STATE_SIGNING_KEY)
+      .update(compressed)
+      .digest('base64url');
+    const sigBuf = Buffer.from(sig, 'utf8');
+    const expectedBuf = Buffer.from(expectedSig, 'utf8');
+    if (
+      sigBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(sigBuf, expectedBuf)
+    ) {
+      return null;
+    }
+
+    const raw = zlib
+      .inflateRawSync(Buffer.from(compressed, 'base64url'))
+      .toString('utf8');
+    const parsed = JSON.parse(raw) as CompactStatePayload;
+    if (!parsed || parsed.v !== 1 || !parsed.c || !parsed.c.id) return null;
+
+    const store = getStore();
+    const campaignId = parsed.c.id;
+
+    // Skip if already present with at least as much progress
+    const existing = store.campaigns.find((c) => c.id === campaignId);
+    const existingLineupCount = existing
+      ? store.lineups.filter((l) => l.campaignId === campaignId && l.playerId)
+          .length
+      : -1;
+    const tokenLineupCount = parsed.l.filter((item) => item[1] !== null).length;
+    const existingMatchCount = existing
+      ? store.matches.filter((m) => m.campaignId === campaignId).length
+      : -1;
+
+    if (
+      existing &&
+      existingLineupCount >= tokenLineupCount &&
+      existingMatchCount >= parsed.m.length &&
+      existing.status === parsed.c.st &&
+      existing.skipsRemaining <= parsed.c.sk
+    ) {
+      return campaignId;
+    }
+
+    // Remove older copy in this lambda before hydrating
+    store.campaigns = store.campaigns.filter((c) => c.id !== campaignId);
+    store.lineups = store.lineups.filter((l) => l.campaignId !== campaignId);
+    store.matches = store.matches.filter((m) => m.campaignId !== campaignId);
+    store.achievements = store.achievements.filter(
+      (a) => a.campaignId !== campaignId
+    );
+
+    const hydratedCampaign: MemCampaign = {
+      id: campaignId,
+      userId: parsed.c.u,
+      guestToken: parsed.c.g,
+      coachName: parsed.c.cn,
+      formation: parsed.c.f,
+      style: parsed.c.sy,
+      difficulty: parsed.c.df,
+      status: parsed.c.st,
+      skipsRemaining: parsed.c.sk,
+      currentSquadId: parsed.c.cs,
+      drawnSquadIds: Array.isArray(parsed.c.ds) ? parsed.c.ds : [],
+      avgRating: parsed.c.ar,
+      wins: parsed.c.w,
+      draws: parsed.c.dr,
+      losses: parsed.c.lo,
+      goalsFor: parsed.c.gf,
+      goalsAgainst: parsed.c.ga,
+      isChampion: Boolean(parsed.c.ic),
+      isPerfectSevenZero: Boolean(parsed.c.ip),
+      shareCode: parsed.c.sc,
+      createdAt: new Date(parsed.c.ca),
+      completedAt: parsed.c.cpa ? new Date(parsed.c.cpa) : null,
+    };
+    store.campaigns.push(hydratedCampaign);
+
+    const formationDef = getFormation(hydratedCampaign.formation);
+    const slotTupleByIndex = new Map(parsed.l.map((item) => [item[0], item]));
+
+    for (const defSlot of formationDef.slots) {
+      const tuple = slotTupleByIndex.get(defSlot.slotIndex);
+      const playerId = tuple ? tuple[1] : null;
+      const pickedAtMs = tuple ? tuple[2] : null;
+      let snapshot: PlayerSnapshot | null = null;
+      if (playerId !== null) {
+        const player = store.players.find((p) => p.id === playerId);
+        const squad = player
+          ? store.squads.find((s) => s.id === player.squadId)
+          : undefined;
+        if (player) {
+          snapshot = {
+            id: player.id,
+            squadId: player.squadId,
+            squadName: squad?.name || 'Elenco',
+            squadSeason: squad?.season || '',
+            squadCrestUrl: squad?.crestUrl || null,
+            fullName: player.fullName,
+            nickname: player.nickname,
+            shirtNumber: player.shirtNumber,
+            primaryPosition: player.primaryPosition,
+            secondaryPositions: [],
+            rating: player.rating,
+            isLegendary: player.isLegendary,
+            photoUrl: player.photoUrl,
+          };
+        }
+      }
+
+      store.lineups.push({
+        id: store.nextLineupId++,
+        campaignId,
+        slotIndex: defSlot.slotIndex,
+        slotPosition: defSlot.position,
+        slotLabel: defSlot.label,
+        playerId: snapshot ? playerId : null,
+        playerSnapshot: snapshot,
+        pickedAt: pickedAtMs ? new Date(pickedAtMs) : null,
+      });
+    }
+
+    for (const m of parsed.m) {
+      const matchingSquad = store.squads.find(
+        (s) => s.name.replace(' (Exemplo)', '') === m.on || s.name === m.on
+      );
+      store.matches.push({
+        id: store.nextMatchId++,
+        campaignId,
+        matchOrder: m.o,
+        stage: m.st,
+        opponentName: m.on,
+        opponentCrestUrl: matchingSquad?.crestUrl || null,
+        opponentStrength: m.os,
+        homeScore: m.hs,
+        awayScore: m.as,
+        penaltyNote: m.pn,
+        events: Array.isArray(m.ev) ? m.ev : [],
+        playedAt: new Date(m.pa),
+      });
+    }
+
+    for (const a of parsed.a) {
+      store.achievements.push({
+        id: store.nextAchievementId++,
+        userId: hydratedCampaign.userId,
+        guestToken: hydratedCampaign.guestToken,
+        campaignId,
+        code: a.cd,
+        title: a.t,
+        description: a.d,
+        unlockedAt: new Date(a.ua),
+      });
+    }
+
+    return campaignId;
+  } catch {
+    return null;
+  }
 }

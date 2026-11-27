@@ -1,8 +1,49 @@
 const RETRYABLE_METHODS = new Set(['GET', 'HEAD']);
 const TRANSIENT_STATUSES = new Set([502, 503, 504]);
+const CAMPAIGN_STATE_PREFIX = 'saz_cstate_';
+const LATEST_CAMPAIGN_STATE_KEY = 'saz_cstate_latest';
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getStoredCampaignState(url: string): string | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    const match = url.match(/\/api\/campaigns\/(\d+)/);
+    if (match?.[1]) {
+      return (
+        window.localStorage.getItem(`${CAMPAIGN_STATE_PREFIX}${match[1]}`) ||
+        window.localStorage.getItem(LATEST_CAMPAIGN_STATE_KEY)
+      );
+    }
+    if (
+      url.startsWith('/api/campaigns') ||
+      url.startsWith('/api/achievements')
+    ) {
+      return window.localStorage.getItem(LATEST_CAMPAIGN_STATE_KEY);
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return null;
+}
+
+function persistCampaignState(data: any) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (data && typeof data._stateToken === 'string' && data._stateToken) {
+      if (data.campaign?.id) {
+        window.localStorage.setItem(
+          `${CAMPAIGN_STATE_PREFIX}${data.campaign.id}`,
+          data._stateToken
+        );
+      }
+      window.localStorage.setItem(LATEST_CAMPAIGN_STATE_KEY, data._stateToken);
+    }
+  } catch {
+    // Ignore storage quota/access errors
+  }
 }
 
 export async function apiFetch<T>(
@@ -21,6 +62,12 @@ export async function apiFetch<T>(
     }
     if (idToken) {
       headers.set('Authorization', `Bearer ${idToken}`);
+    }
+    if (!headers.has('X-Campaign-State')) {
+      const stateToken = getStoredCampaignState(url);
+      if (stateToken) {
+        headers.set('X-Campaign-State', stateToken);
+      }
     }
 
     let response: Response;
@@ -43,7 +90,8 @@ export async function apiFetch<T>(
 
     if (!response.ok) {
       const isTransient404 = response.status === 404 && (!isJson || !data.error);
-      const isTransientStatus = TRANSIENT_STATUSES.has(response.status) || isTransient404;
+      const isTransientStatus =
+        TRANSIENT_STATUSES.has(response.status) || isTransient404;
       if (canRetry && isTransientStatus && attempt < maxAttempts - 1) {
         await delay(500 * (attempt + 1));
         continue;
@@ -51,6 +99,7 @@ export async function apiFetch<T>(
       throw new Error(data.error || `Erro na requisição (${response.status})`);
     }
 
+    persistCampaignState(data);
     return data as T;
   }
 

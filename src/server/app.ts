@@ -42,6 +42,7 @@ import {
   memCreateCampaign,
   memGetCredits,
   memGetSquadSummary,
+  memHydrateFromToken,
   memListAchievements,
   memListCampaigns,
   memListPublicSquads,
@@ -54,6 +55,16 @@ import {
 
 export const app = express();
 app.use(express.json({ limit: '6mb' }));
+
+app.use((req, _res, next) => {
+  if (!hasDatabaseConfig) {
+    const stateToken = req.get('x-campaign-state');
+    if (stateToken) {
+      memHydrateFromToken(stateToken);
+    }
+  }
+  next();
+});
 
 const POSITION_SORT_ORDER: Record<string, number> = {
   GOL: 0,
