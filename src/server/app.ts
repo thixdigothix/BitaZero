@@ -50,7 +50,6 @@ import {
   memRunMatchStep,
   memSimulateBonus,
   memSkipCampaign,
-  memUpdateCredits,
 } from './memoryStore.ts';
 
 export const app = express();
@@ -496,50 +495,31 @@ app.get('/api/squads', async (req, res) => {
 });
 
 const DEFAULT_CREDITS_PAYLOAD = {
-  title: 'Créditos & Agradecimentos',
+  title: 'Projeto',
   subtitle: 'BIT A ZERO · Draft de elencos do canal Bit Fut',
   intro:
-    'Projeto criado para celebrar os elencos históricos, carreiras lendárias e o desafio do 7 a 0 do canal Bit Fut.',
+    'Projeto criado como homenagem aos anos de conteúdo do querido Pedro. Como grande fã dediquei um tempinho criando esse site!',
   entries: [
     {
       id: 'bitfut',
       role: 'Inspiração & Canal',
       name: 'Canal Bit Fut',
       description:
-        'Séries marcantes, clubes históricos, lendas inesquecíveis e o formato do desafio que inspiraram este jogo.',
-      linkLabel: '',
-      linkUrl: '',
+        'A inspiração veio dos sites de futebol que rodam a internet, como o próprio 7a0 e todos os elencos foram elencos de vídeos ou lives do canal Bit Fut e derivados.',
+      linkLabel: 'Canal Bit Fut',
+      linkUrl: 'https://www.youtube.com/@BitFut',
     },
     {
       id: 'curadoria',
       role: 'Idealização & Elencos',
-      name: 'Equipe BIT A ZERO',
-      description:
-        'Seleção dos elencos, montagem das fotos e calibração das disputas do torneio.',
-      linkLabel: '',
-      linkUrl: '',
-    },
-    {
-      id: 'comunidade',
-      role: 'Comunidade',
-      name: 'Torcedores & Jogadores',
-      description:
-        'Sugestões de novos times, testes de equilíbrio e campanhas compartilhadas a cada temporada.',
-      linkLabel: '',
-      linkUrl: '',
+      name: 'Thix',
+      description: 'Seleção dos elencos, ideia e produção',
+      linkLabel: 'Link do meu Twitter',
+      linkUrl: 'https://x.com/THIAGO_THIX',
     },
   ] satisfies CreditEntry[],
-  footerNote:
-    'Administradores logados podem editar todos os textos, funções, links e cartões desta página.',
+  footerNote: '',
 };
-
-function sanitizeCreditUrl(raw: unknown): string {
-  if (typeof raw !== 'string') return '';
-  const trimmed = raw.trim();
-  if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return '';
-}
 
 async function getOrInitSiteCredits() {
   await ensureDatabaseSchema();
@@ -569,70 +549,6 @@ app.get('/api/credits', async (_req, res) => {
   } catch (error) {
     console.error('Error loading credits:', error);
     res.status(500).json({ error: 'Erro ao carregar créditos.' });
-  }
-});
-
-app.put('/api/credits', requireAdmin, async (req: AuthRequest, res) => {
-  try {
-    const { title, subtitle, intro, entries, footerNote } = req.body || {};
-
-    const cleanTitle =
-      typeof title === 'string' && title.trim()
-        ? title.trim()
-        : 'Créditos & Agradecimentos';
-    const cleanSubtitle = typeof subtitle === 'string' ? subtitle.trim() : '';
-    const cleanIntro = typeof intro === 'string' ? intro.trim() : '';
-    const cleanFooter = typeof footerNote === 'string' ? footerNote.trim() : '';
-
-    const rawEntries = Array.isArray(entries) ? entries : [];
-    const cleanEntries: CreditEntry[] = rawEntries
-      .filter((item) => item && typeof item === 'object')
-      .map((item, idx) => ({
-        id:
-          typeof item.id === 'string' && item.id.trim()
-            ? item.id.trim()
-            : `credit-${Date.now()}-${idx}`,
-        role: typeof item.role === 'string' ? item.role.trim() : '',
-        name: typeof item.name === 'string' ? item.name.trim() : '',
-        description:
-          typeof item.description === 'string' ? item.description.trim() : '',
-        linkLabel:
-          typeof item.linkLabel === 'string' ? item.linkLabel.trim() : '',
-        linkUrl: sanitizeCreditUrl(item.linkUrl),
-      }))
-      .filter((entry) => entry.name.length > 0 || entry.role.length > 0);
-
-    if (!hasDatabaseConfig) {
-      const updated = memUpdateCredits({
-        title: cleanTitle,
-        subtitle: cleanSubtitle,
-        intro: cleanIntro,
-        entries: cleanEntries,
-        footerNote: cleanFooter,
-        updatedBy: req.dbUser?.email || 'admin',
-      });
-      return res.json({ credits: updated });
-    }
-
-    const current = await getOrInitSiteCredits();
-    const [updated] = await db
-      .update(siteCredits)
-      .set({
-        title: cleanTitle,
-        subtitle: cleanSubtitle,
-        intro: cleanIntro,
-        entries: cleanEntries,
-        footerNote: cleanFooter,
-        updatedBy: req.dbUser?.email || 'admin',
-        updatedAt: new Date(),
-      })
-      .where(eq(siteCredits.id, current.id))
-      .returning();
-
-    res.json({ credits: updated });
-  } catch (error) {
-    console.error('Error updating credits:', error);
-    res.status(500).json({ error: 'Erro ao salvar créditos.' });
   }
 });
 
